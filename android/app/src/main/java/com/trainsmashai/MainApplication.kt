@@ -10,6 +10,8 @@ import com.facebook.react.ReactNativeHost
 import com.facebook.react.ReactPackage
 import com.facebook.react.defaults.DefaultNewArchitectureEntryPoint
 import com.facebook.react.defaults.DefaultReactNativeHost
+import com.facebook.react.soloader.OpenSourceMergedSoMapping
+import com.facebook.soloader.SoLoader
 import com.trainsmash.arwprocessor.ArwProcessorPackage
 
 import expo.modules.ApplicationLifecycleDispatcher
@@ -47,7 +49,10 @@ class MainApplication : Application(), ReactApplication {
 
   override fun onCreate() {
     super.onCreate()
-    // Load New Architecture feature flags and native libraries.
+    // SoLoader must be initialized before any loadLibrary() call (including
+    // DefaultNewArchitectureEntryPoint.load → DefaultSoLoader.maybeLoadSoLibrary).
+    SoLoader.init(this, OpenSourceMergedSoMapping)
+    // Load New Architecture feature flags and SO libraries.
     DefaultNewArchitectureEntryPoint.load()
     ApplicationLifecycleDispatcher.onApplicationCreate(this)
   }

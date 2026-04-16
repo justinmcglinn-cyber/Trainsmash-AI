@@ -94,7 +94,6 @@ export function useCameraVolume() {
         }
       } else {
         // Single file selected — wrap it
-        const fileName = result => result.split('/').pop() ?? 'file';
         setFolders([{
           name: 'Selected Files',
           uri: rootUri,
