@@ -1,0 +1,28 @@
+{
+  "expo": {
+    "name": "Trainsmash Collage",
+    "slug": "trainsmash-collage",
+    "version": "1.0.0",
+    "orientation": "landscape",
+    "android": {
+      "package": "com.trainsmash.collage",
+      "permissions": [
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.READ_MEDIA_IMAGES",
+        "android.permission.WRITE_EXTERNAL_STORAGE"
+      ],
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#ffffff"
+      }
+    },
+    "plugins": [
+      "expo-document-picker",
+      "expo-media-library",
+      [
+        "expo-sharing",
+        {}
+      ]
+    ]
+  }
+}
