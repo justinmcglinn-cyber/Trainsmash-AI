@@ -24,14 +24,27 @@ jobs:
       - name: Install JS dependencies
         run: npm ci
 
+      # React Native 0.74+ requires JDK 17
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           java-version: "17"
           distribution: "temurin"
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+      # ubuntu-latest has Android SDK pre-installed at $ANDROID_HOME.
+      # We just need to install NDK and accept licenses.
+      - name: Install Android SDK components
+        run: |
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          # Install NDK version required by React Native 0.81
+          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager \
+            "ndk;27.1.12297006" \
+            "build-tools;34.0.0" \
+            "platforms;android-34" \
+            --sdk_root=$ANDROID_HOME 2>/dev/null || true
+          # Accept all licenses non-interactively
+          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager \
+            --licenses --sdk_root=$ANDROID_HOME 2>/dev/null || true
 
       - name: Cache Gradle packages
         uses: actions/cache@v4
@@ -46,12 +59,16 @@ jobs:
         run: chmod +x android/gradlew
 
       - name: Build debug APK
+        env:
+          ANDROID_HOME: ${{ env.ANDROID_HOME }}
+          ANDROID_SDK_ROOT: ${{ env.ANDROID_HOME }}
         run: |
           cd android
           ./gradlew assembleDebug \
             -PreactNativeArchitectures=arm64-v8a \
             --no-daemon \
-            --stacktrace
+            --stacktrace \
+            2>&1
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
@@ -59,3 +76,14 @@ jobs:
           name: trainsmash-collage-debug
           path: android/app/build/outputs/apk/debug/app-debug.apk
           retention-days: 14
+
+      # Always upload build logs on failure for easier debugging
+      - name: Upload build logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs
+          path: |
+            android/app/build/reports/
+            ~/.gradle/daemon/*/daemon-*.out.log
+          retention-days: 3
