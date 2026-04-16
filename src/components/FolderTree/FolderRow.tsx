@@ -1,9 +1,9 @@
 import React from 'react';
-import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { CameraFolder } from '../../hooks/useCameraVolume';
+import { Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { LocalFolder } from '../../hooks/useLocalLibrary';
 
 interface Props {
-  folder: CameraFolder;
+  folder: LocalFolder;
   expanded: boolean;
   onToggle: () => void;
   onSelectAll: () => void;
@@ -19,7 +19,7 @@ export function FolderRow({
   selectedUris,
   onToggleFile,
 }: Props) {
-  const files = folder.children ?? [];
+  const files = folder.children;
   const selectedCount = files.filter(f => selectedUris.has(f.uri)).length;
   const allSelected = files.length > 0 && selectedCount === files.length;
 
@@ -28,50 +28,70 @@ export function FolderRow({
       <TouchableOpacity style={styles.folderHeader} onPress={onToggle} activeOpacity={0.7}>
         <Text style={styles.chevron}>{expanded ? '▾' : '▸'}</Text>
         <View style={styles.folderInfo}>
-          <Text style={styles.folderName}>{folder.name}</Text>
-          <Text style={styles.folderMeta}>{files.length} RAW files</Text>
+          <Text style={styles.folderName}>{formatFolderName(folder.name)}</Text>
+          <Text style={styles.folderMeta}>
+            {files.length} photo{files.length !== 1 ? 's' : ''}
+            {selectedCount > 0 ? `  ·  ${selectedCount} selected` : ''}
+          </Text>
         </View>
         {files.length > 0 && (
           <TouchableOpacity
             style={[styles.selectAllBtn, allSelected && styles.selectAllBtnActive]}
             onPress={onSelectAll}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           >
             <Text style={[styles.selectAllText, allSelected && styles.selectAllTextActive]}>
-              {allSelected ? 'Deselect All' : 'Select All'}
+              {allSelected ? 'Deselect' : 'All'}
             </Text>
           </TouchableOpacity>
         )}
       </TouchableOpacity>
 
-      {expanded &&
-        files.map(file => {
-          const selected = selectedUris.has(file.uri);
-          return (
-            <TouchableOpacity
-              key={file.uri}
-              style={[styles.fileRow, selected && styles.fileRowSelected]}
-              onPress={() => onToggleFile(file.uri)}
-              activeOpacity={0.7}
-            >
-              <View style={[styles.checkbox, selected && styles.checkboxSelected]}>
-                {selected && <Text style={styles.checkmark}>✓</Text>}
-              </View>
-              <View style={styles.fileInfo}>
-                <Text style={styles.fileName} numberOfLines={1}>
-                  {file.name}
-                </Text>
-                {file.size != null && (
-                  <Text style={styles.fileSize}>
-                    {(file.size / 1024 / 1024).toFixed(1)} MB
-                  </Text>
+      {expanded && (
+        <View style={styles.grid}>
+          {files.map(file => {
+            const selected = selectedUris.has(file.uri);
+            return (
+              <TouchableOpacity
+                key={file.uri}
+                style={[styles.photoCell, selected && styles.photoCellSelected]}
+                onPress={() => onToggleFile(file.uri)}
+                activeOpacity={0.75}
+              >
+                <Image
+                  source={{ uri: file.uri }}
+                  style={styles.thumbnail}
+                  resizeMode="cover"
+                />
+                {selected && (
+                  <View style={styles.checkOverlay}>
+                    <Text style={styles.checkMark}>✓</Text>
+                  </View>
                 )}
-              </View>
-            </TouchableOpacity>
-          );
-        })}
+                <Text style={styles.photoName} numberOfLines={1}>
+                  {file.name.replace(/\.[^.]+$/, '')}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+      )}
     </View>
   );
 }
+
+/** "20240416" → "16 Apr 2024", falls back to raw string */
+function formatFolderName(name: string): string {
+  if (/^\d{8}$/.test(name)) {
+    const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const m = parseInt(name.slice(4, 6), 10) - 1;
+    return `${name.slice(6, 8)} ${months[m] ?? ''} ${name.slice(0, 4)}`;
+  }
+  return name;
+}
+
+const CELL = 96;
+const GAP = 6;
 
 const styles = StyleSheet.create({
   folderHeader: {
@@ -79,29 +99,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 12,
     paddingHorizontal: 16,
-    backgroundColor: '#f8f8f8',
+    backgroundColor: '#f0f0f5',
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderColor: '#ddd',
   },
-  chevron: {
-    fontSize: 16,
-    color: '#555',
-    marginRight: 8,
-    width: 16,
-  },
-  folderInfo: {
-    flex: 1,
-  },
-  folderName: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#111',
-  },
-  folderMeta: {
-    fontSize: 12,
-    color: '#888',
-    marginTop: 1,
-  },
+  chevron: { fontSize: 16, color: '#555', marginRight: 8, width: 16 },
+  folderInfo: { flex: 1 },
+  folderName: { fontSize: 15, fontWeight: '600', color: '#111' },
+  folderMeta: { fontSize: 12, color: '#888', marginTop: 1 },
   selectAllBtn: {
     paddingHorizontal: 10,
     paddingVertical: 5,
@@ -109,63 +114,43 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#007AFF',
   },
-  selectAllBtnActive: {
-    backgroundColor: '#007AFF',
-  },
-  selectAllText: {
-    fontSize: 12,
-    color: '#007AFF',
-    fontWeight: '500',
-  },
-  selectAllTextActive: {
-    color: '#fff',
-  },
-  fileRow: {
+  selectAllBtnActive: { backgroundColor: '#007AFF' },
+  selectAllText: { fontSize: 12, color: '#007AFF', fontWeight: '600' },
+  selectAllTextActive: { color: '#fff' },
+  grid: {
     flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    paddingLeft: 40,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderColor: '#eee',
+    flexWrap: 'wrap',
+    padding: GAP,
+    gap: GAP,
     backgroundColor: '#fff',
   },
-  fileRowSelected: {
-    backgroundColor: '#EEF4FF',
+  photoCell: {
+    width: CELL,
+    borderRadius: 6,
+    overflow: 'hidden',
+    borderWidth: 2,
+    borderColor: 'transparent',
   },
-  checkbox: {
+  photoCellSelected: { borderColor: '#007AFF' },
+  thumbnail: { width: CELL, height: CELL, backgroundColor: '#eee' },
+  checkOverlay: {
+    position: 'absolute',
+    top: 4,
+    right: 4,
     width: 22,
     height: 22,
-    borderRadius: 5,
-    borderWidth: 1.5,
-    borderColor: '#bbb',
+    borderRadius: 11,
+    backgroundColor: '#007AFF',
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 12,
   },
-  checkboxSelected: {
-    backgroundColor: '#007AFF',
-    borderColor: '#007AFF',
-  },
-  checkmark: {
-    color: '#fff',
-    fontSize: 13,
-    fontWeight: '700',
-  },
-  fileInfo: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  fileName: {
-    fontSize: 13,
-    color: '#222',
-    flex: 1,
-    marginRight: 8,
-  },
-  fileSize: {
-    fontSize: 11,
-    color: '#999',
+  checkMark: { color: '#fff', fontSize: 13, fontWeight: '700' },
+  photoName: {
+    fontSize: 9,
+    color: '#666',
+    paddingHorizontal: 3,
+    paddingVertical: 3,
+    backgroundColor: '#f8f8f8',
+    textAlign: 'center',
   },
 });
