@@ -31,20 +31,39 @@ jobs:
           java-version: "17"
           distribution: "temurin"
 
-      # ubuntu-latest has Android SDK pre-installed at $ANDROID_HOME.
-      # We just need to install NDK and accept licenses.
-      - name: Install Android SDK components
+      # ubuntu-latest has Android SDK + NDK pre-installed.
+      # Detect which NDK version is available and wire it up so Gradle uses it.
+      - name: Configure Android SDK and NDK
         run: |
-          echo "ANDROID_HOME=$ANDROID_HOME"
-          # Install NDK version required by React Native 0.81
-          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager \
-            "ndk;27.1.12297006" \
-            "build-tools;34.0.0" \
-            "platforms;android-34" \
-            --sdk_root=$ANDROID_HOME 2>/dev/null || true
-          # Accept all licenses non-interactively
-          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager \
-            --licenses --sdk_root=$ANDROID_HOME 2>/dev/null || true
+          echo "ANDROID_HOME: $ANDROID_HOME"
+          echo "Available NDK versions:"
+          ls $ANDROID_HOME/ndk/ 2>/dev/null || echo "(none found)"
+
+          # Use the highest pre-installed NDK version
+          NDK_VERSION=$(ls $ANDROID_HOME/ndk/ 2>/dev/null | sort -V | tail -1)
+
+          if [ -n "$NDK_VERSION" ]; then
+            echo "Using pre-installed NDK: $NDK_VERSION"
+            # Override ndkVersion in gradle.properties so the build uses this NDK
+            echo "ndkVersion=$NDK_VERSION" >> android/gradle.properties
+          else
+            echo "No NDK found — installing NDK 27.1.12297006 via sdkmanager"
+            SDKMANAGER=$(find $ANDROID_HOME/cmdline-tools -name "sdkmanager" 2>/dev/null | head -1)
+            if [ -n "$SDKMANAGER" ]; then
+              yes | $SDKMANAGER "ndk;27.1.12297006" 2>&1
+            else
+              echo "sdkmanager not found — build may fail"
+            fi
+          fi
+
+          # Accept all SDK licenses
+          SDKMANAGER=$(find $ANDROID_HOME/cmdline-tools -name "sdkmanager" 2>/dev/null | head -1)
+          if [ -n "$SDKMANAGER" ]; then
+            yes | $SDKMANAGER --licenses 2>/dev/null || true
+          fi
+
+          # Print final gradle.properties ndkVersion line for verification
+          grep ndkVersion android/gradle.properties || true
 
       - name: Cache Gradle packages
         uses: actions/cache@v4
@@ -59,9 +78,6 @@ jobs:
         run: chmod +x android/gradlew
 
       - name: Build debug APK
-        env:
-          ANDROID_HOME: ${{ env.ANDROID_HOME }}
-          ANDROID_SDK_ROOT: ${{ env.ANDROID_HOME }}
         run: |
           cd android
           ./gradlew assembleDebug \
@@ -77,13 +93,11 @@ jobs:
           path: android/app/build/outputs/apk/debug/app-debug.apk
           retention-days: 14
 
-      # Always upload build logs on failure for easier debugging
+      # Always upload build reports on failure for debugging
       - name: Upload build logs on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: build-logs
-          path: |
-            android/app/build/reports/
-            ~/.gradle/daemon/*/daemon-*.out.log
+          path: android/app/build/reports/
           retention-days: 3
