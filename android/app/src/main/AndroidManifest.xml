@@ -6,8 +6,8 @@
   <!-- Storage access for reading RAW files from camera / USB -->
   <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
     android:maxSdkVersion="32"/>
-  <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
-    android:maxSdkVersion="28"/>
+  <!-- Let expo-file-system control maxSdkVersion for WRITE_EXTERNAL_STORAGE (it uses 32) -->
+  <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"/>
   <!-- Android 13+ granular media permissions -->
   <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/>
   <!-- USB Host for direct camera connection -->
