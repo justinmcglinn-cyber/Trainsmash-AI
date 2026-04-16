@@ -1,14 +1,16 @@
 package com.trainsmash.arwprocessor
 
-import android.content.Context
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.util.Base64
 import com.facebook.react.bridge.*
 import kotlinx.coroutines.*
+import kotlinx.coroutines.sync.Semaphore
 
 class ArwProcessorModule(private val reactContext: ReactApplicationContext) :
     ReactContextBaseJavaModule(reactContext) {
+
+    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     override fun getName(): String = "ArwProcessor"
 
@@ -18,32 +20,9 @@ class ArwProcessorModule(private val reactContext: ReactApplicationContext) :
      */
     @ReactMethod
     fun extractPreview(uri: String, promise: Promise) {
-        CoroutineScope(Dispatchers.IO).launch {
+        scope.launch {
             try {
-                val contentUri = Uri.parse(uri)
-                val resolver = reactContext.contentResolver
-
-                val inputStream = resolver.openInputStream(contentUri)
-                    ?: throw IllegalArgumentException("Cannot open URI: $uri")
-
-                val bytes = inputStream.readBytes()
-                inputStream.close()
-
-                val jpegBytes = TiffParser(bytes).extractEmbeddedJpeg()
-
-                // Decode dimensions without loading full bitmap
-                val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                BitmapFactory.decodeByteArray(jpegBytes, 0, jpegBytes.size, opts)
-
-                val base64Str = Base64.encodeToString(jpegBytes, Base64.NO_WRAP)
-                val dataUrl = "data:image/jpeg;base64,$base64Str"
-
-                val result = Arguments.createMap().apply {
-                    putString("dataUrl", dataUrl)
-                    putInt("width", opts.outWidth)
-                    putInt("height", opts.outHeight)
-                }
-
+                val result = extractSingle(uri)
                 withContext(Dispatchers.Main) {
                     promise.resolve(result)
                 }
@@ -58,26 +37,28 @@ class ArwProcessorModule(private val reactContext: ReactApplicationContext) :
     /**
      * Extract previews from multiple RAW files in parallel (up to 4 concurrent).
      * fileUris: JS array of URI strings.
-     * Resolves with an array of {dataUrl, width, height} objects.
+     * Resolves with an array of {uri, dataUrl, width, height} objects.
      */
     @ReactMethod
     fun extractPreviews(fileUris: ReadableArray, promise: Promise) {
-        CoroutineScope(Dispatchers.IO).launch {
+        scope.launch {
             try {
                 val uris = (0 until fileUris.size()).map { fileUris.getString(it)!! }
+                val semaphore = Semaphore(4)
 
-                // Process in parallel with a semaphore capping concurrency at 4
-                val semaphore = kotlinx.coroutines.sync.Semaphore(4)
-                val results = uris.map { uri ->
-                    async {
-                        semaphore.acquire()
-                        try {
-                            extractSingle(uri)
-                        } finally {
-                            semaphore.release()
+                // coroutineScope ensures all async blocks complete before we continue
+                val results = coroutineScope {
+                    uris.map { uri ->
+                        async {
+                            semaphore.acquire()
+                            try {
+                                extractSingle(uri)
+                            } finally {
+                                semaphore.release()
+                            }
                         }
-                    }
-                }.awaitAll()
+                    }.awaitAll()
+                }
 
                 val resultArray = Arguments.createArray()
                 for (r in results) {
@@ -114,5 +95,10 @@ class ArwProcessorModule(private val reactContext: ReactApplicationContext) :
             putInt("width", opts.outWidth)
             putInt("height", opts.outHeight)
         }
+    }
+
+    override fun invalidate() {
+        super.invalidate()
+        scope.cancel()
     }
 }
