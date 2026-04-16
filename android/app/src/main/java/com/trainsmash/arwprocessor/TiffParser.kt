@@ -26,6 +26,9 @@ class TiffParser(private val data: ByteArray) {
         private const val TAG_IMAGE_HEIGHT = 0x0101
         private const val TAG_COMPRESSION = 0x0103
         private const val COMPRESSION_JPEG = 6
+        // EXIF tags
+        private const val TAG_EXIF_IFD = 0x8769
+        private const val TAG_DATE_TIME_ORIGINAL = 0x9003
 
         // TIFF type sizes
         private val TYPE_SIZES = intArrayOf(0, 1, 1, 2, 4, 8, 1, 1, 2, 4, 8, 4, 8)
@@ -33,6 +36,38 @@ class TiffParser(private val data: ByteArray) {
 
     data class IfdEntry(val tag: Int, val type: Int, val count: Long, val valueOrOffset: Long)
     data class JpegBlock(val offset: Int, val length: Int, val width: Int = 0, val height: Int = 0)
+
+    /**
+     * Returns the capture date as "YYYYMMDD" by reading DateTimeOriginal from EXIF,
+     * or null if not found. Format in file is "YYYY:MM:DD HH:MM:SS".
+     */
+    fun extractCaptureDate(): String? {
+        return try {
+            buf = ByteBuffer.wrap(data)
+            parseHeader()
+            val ifd0Offset = readUInt32().toInt()
+            val ifd0Entries = parseIfd(ifd0Offset)
+
+            // IFD0 → ExifIFD pointer (tag 0x8769)
+            val exifIfdEntry = ifd0Entries.find { it.tag == TAG_EXIF_IFD } ?: return null
+            val exifIfdOffset = exifIfdEntry.valueOrOffset.toInt()
+            val exifEntries = parseIfd(exifIfdOffset)
+
+            // ExifIFD → DateTimeOriginal (tag 0x9003), ASCII type, 20 bytes "YYYY:MM:DD HH:MM:SS\0"
+            val dtEntry = exifEntries.find { it.tag == TAG_DATE_TIME_ORIGINAL } ?: return null
+            val count = dtEntry.count.toInt()
+            val offset = dtEntry.valueOrOffset.toInt()
+            if (offset + count > data.size) return null
+
+            val ascii = String(data, offset, minOf(count, 20), Charsets.US_ASCII).trimEnd('\u0000')
+            // Expected: "YYYY:MM:DD HH:MM:SS"
+            if (ascii.length >= 10) {
+                ascii.substring(0, 4) + ascii.substring(5, 7) + ascii.substring(8, 10)
+            } else null
+        } catch (_: Exception) {
+            null
+        }
+    }
 
     fun extractEmbeddedJpeg(): ByteArray {
         buf = ByteBuffer.wrap(data)

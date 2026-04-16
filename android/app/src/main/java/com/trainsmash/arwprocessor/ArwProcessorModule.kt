@@ -84,7 +84,9 @@ class ArwProcessorModule(private val reactContext: ReactApplicationContext) :
         val bytes = inputStream.readBytes()
         inputStream.close()
 
-        val jpegBytes = TiffParser(bytes).extractEmbeddedJpeg()
+        val tiff = TiffParser(bytes)
+        val jpegBytes = tiff.extractEmbeddedJpeg()
+        val captureDate = tiff.extractCaptureDate()
         val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeByteArray(jpegBytes, 0, jpegBytes.size, opts)
         val base64Str = Base64.encodeToString(jpegBytes, Base64.NO_WRAP)
@@ -94,6 +96,7 @@ class ArwProcessorModule(private val reactContext: ReactApplicationContext) :
             putString("dataUrl", "data:image/jpeg;base64,$base64Str")
             putInt("width", opts.outWidth)
             putInt("height", opts.outHeight)
+            if (captureDate != null) putString("captureDate", captureDate)
         }
     }
 

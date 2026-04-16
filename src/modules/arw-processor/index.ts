@@ -7,6 +7,8 @@ export interface ArwPreviewResult {
   dataUrl: string;
   width: number;
   height: number;
+  /** EXIF DateTimeOriginal as "YYYYMMDD", present only for RAW files */
+  captureDate?: string;
 }
 
 /**

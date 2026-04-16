@@ -21,6 +21,12 @@ function todayFolder(): string {
   );
 }
 
+/** Use EXIF captureDate "YYYYMMDD" if valid, otherwise fall back to today. */
+function folderForDate(captureDate?: string): string {
+  if (captureDate && /^\d{8}$/.test(captureDate)) return captureDate;
+  return todayFolder();
+}
+
 export interface ImportProgress {
   done: number;
   total: number;
@@ -73,9 +79,6 @@ export function useCameraImport() {
     setImporting(true);
     setProgress({ done: 0, total: files.length, currentFile: '' });
 
-    const targetDir = TRAINSMASH_DIR + todayFolder() + '/';
-    await FileSystem.makeDirectoryAsync(targetDir, { intermediates: true });
-
     let saved = 0;
 
     for (let i = 0; i < files.length; i++) {
@@ -83,27 +86,38 @@ export function useCameraImport() {
       const name = file.name ?? `photo_${i}`;
       const ext = getExt(name);
       const baseName = name.replace(/\.[^.]+$/, '');
-      const targetPath = `${targetDir}${baseName}.jpg`;
 
       setProgress({ done: i, total: files.length, currentFile: name });
 
       try {
-        // Skip if already imported
-        const already = await FileSystem.getInfoAsync(targetPath);
-        if (already.exists) {
-          saved++;
-        } else if (RAW_EXTS.has(ext)) {
-          // Extract embedded JPEG preview from RAW file
+        if (RAW_EXTS.has(ext)) {
+          // Extract embedded JPEG preview — captureDate comes from EXIF
           const preview = await extractPreview(file.uri);
-          const base64 = preview.dataUrl.replace(/^data:image\/jpeg;base64,/, '');
-          await FileSystem.writeAsStringAsync(targetPath, base64, {
-            encoding: FileSystem.EncodingType.Base64,
-          });
-          saved++;
+          const targetDir = TRAINSMASH_DIR + folderForDate(preview.captureDate) + '/';
+          await FileSystem.makeDirectoryAsync(targetDir, { intermediates: true });
+          const targetPath = `${targetDir}${baseName}.jpg`;
+          const already = await FileSystem.getInfoAsync(targetPath);
+          if (already.exists) {
+            saved++;
+          } else {
+            const base64 = preview.dataUrl.replace(/^data:image\/jpeg;base64,/, '');
+            await FileSystem.writeAsStringAsync(targetPath, base64, {
+              encoding: FileSystem.EncodingType.Base64,
+            });
+            saved++;
+          }
         } else {
-          // JPEG or PNG — copy as-is (renamed to .jpg)
-          await FileSystem.copyAsync({ from: file.uri, to: targetPath });
-          saved++;
+          // JPEG or PNG — no EXIF extraction, use today's date folder
+          const targetDir = TRAINSMASH_DIR + todayFolder() + '/';
+          await FileSystem.makeDirectoryAsync(targetDir, { intermediates: true });
+          const targetPath = `${targetDir}${baseName}.jpg`;
+          const already = await FileSystem.getInfoAsync(targetPath);
+          if (already.exists) {
+            saved++;
+          } else {
+            await FileSystem.copyAsync({ from: file.uri, to: targetPath });
+            saved++;
+          }
         }
       } catch (e) {
         console.warn(`Import failed for ${name}:`, e);
