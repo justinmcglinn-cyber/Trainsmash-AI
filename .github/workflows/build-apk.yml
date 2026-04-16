@@ -6,9 +6,19 @@ on:
       - "**"
   workflow_dispatch:
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Two parallel jobs:
+#   build       — arm64-v8a APK, uploaded as downloadable artifact
+#   launch-test — x86_64 APK installed on a headless emulator; logcat printed
+#                 directly in the step output so you can read it without
+#                 downloading any file.
+# ─────────────────────────────────────────────────────────────────────────────
+
 jobs:
+
+  # ─────────────────── arm64 APK for installing on your phone ──────────────
   build:
-    name: Build Debug APK
+    name: Build Debug APK (arm64)
     runs-on: ubuntu-latest
 
     steps:
@@ -32,12 +42,9 @@ jobs:
 
       - name: Configure Android NDK
         run: |
-          echo "ANDROID_HOME: $ANDROID_HOME"
-          echo "Available NDK versions:"
-          ls $ANDROID_HOME/ndk/ 2>/dev/null || echo "(none)"
           NDK_VERSION=$(ls $ANDROID_HOME/ndk/ 2>/dev/null | sort -V | tail -1)
           if [ -n "$NDK_VERSION" ]; then
-            echo "Using pre-installed NDK: $NDK_VERSION"
+            echo "Using NDK: $NDK_VERSION"
             echo "ndkVersion=$NDK_VERSION" >> android/gradle.properties
           fi
           SDKMANAGER=$(find $ANDROID_HOME/cmdline-tools -name "sdkmanager" 2>/dev/null | head -1)
@@ -55,7 +62,7 @@ jobs:
       - name: Make gradlew executable
         run: chmod +x android/gradlew
 
-      - name: Build debug APK
+      - name: Build debug APK (arm64-v8a)
         id: gradle_build
         run: |
           cd android
@@ -74,10 +81,144 @@ jobs:
           path: android/app/build/outputs/apk/debug/app-debug.apk
           retention-days: 14
 
-      # Print the tail of the build log directly — readable by expanding this step
       - name: Show build error (last 150 lines)
         if: failure()
         run: |
           echo "======= LAST 150 LINES OF BUILD LOG ======="
           tail -150 build.log || echo "(build.log not found)"
           echo "==========================================="
+
+  # ──────────────── x86_64 APK + headless emulator launch test ─────────────
+  launch-test:
+    name: Emulator Launch Test (x86_64)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install JS dependencies
+        run: npm ci
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: "17"
+          distribution: "temurin"
+
+      - name: Configure Android NDK
+        run: |
+          NDK_VERSION=$(ls $ANDROID_HOME/ndk/ 2>/dev/null | sort -V | tail -1)
+          if [ -n "$NDK_VERSION" ]; then
+            echo "Using NDK: $NDK_VERSION"
+            echo "ndkVersion=$NDK_VERSION" >> android/gradle.properties
+          fi
+          SDKMANAGER=$(find $ANDROID_HOME/cmdline-tools -name "sdkmanager" 2>/dev/null | head -1)
+          [ -n "$SDKMANAGER" ] && yes | $SDKMANAGER --licenses 2>/dev/null || true
+
+      - name: Cache Gradle packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ hashFiles('android/gradle/wrapper/gradle-wrapper.properties', 'android/app/build.gradle') }}
+          restore-keys: gradle-
+
+      - name: Make gradlew executable
+        run: chmod +x android/gradlew
+
+      - name: Build debug APK (x86_64 for emulator)
+        run: |
+          cd android
+          set -o pipefail
+          ./gradlew assembleDebug \
+            -PreactNativeArchitectures=x86_64 \
+            --no-daemon \
+            --warning-mode none \
+            2>&1 | tee ../build.log
+
+      - name: Show build error (last 150 lines)
+        if: failure()
+        run: |
+          echo "======= LAST 150 LINES OF BUILD LOG ======="
+          tail -150 build.log || echo "(build.log not found)"
+          echo "==========================================="
+
+      # KVM group permissions — required for hardware-accelerated emulator
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | \
+            sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Install API 30 x86_64 system image
+        run: |
+          SDKMANAGER=$(find $ANDROID_HOME/cmdline-tools -name "sdkmanager" 2>/dev/null | head -1)
+          yes | $SDKMANAGER "system-images;android-30;default;x86_64" 2>/dev/null || true
+          yes | $SDKMANAGER --licenses 2>/dev/null || true
+
+      - name: Launch app on emulator and capture logcat
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 30
+          arch: x86_64
+          target: default
+          profile: Nexus 6
+          force-avd-creation: false
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot-save
+          disable-animations: true
+          script: |
+            echo "=== Installing APK ==="
+            adb install android/app/build/outputs/apk/debug/app-debug.apk
+
+            echo "=== Clearing logcat ==="
+            adb logcat -c
+
+            echo "=== Launching MainActivity ==="
+            adb shell am start -n com.trainsmashai/.MainActivity
+
+            echo "=== Waiting 35s for JS runtime to boot ==="
+            sleep 35
+
+            echo ""
+            echo "==========================================="
+            echo "  APP STATUS"
+            echo "==========================================="
+            PID=$(adb shell pidof com.trainsmashai 2>/dev/null | tr -d '\r' || true)
+            if [ -n "$PID" ]; then
+              echo "APP IS RUNNING  (PID $PID)"
+            else
+              echo "APP IS NOT RUNNING - crashed or failed to start"
+            fi
+
+            echo ""
+            adb logcat -d > /tmp/launch.log
+            echo "Total logcat lines: $(wc -l < /tmp/launch.log)"
+
+            echo ""
+            echo "==========================================="
+            echo "  REACT NATIVE / HERMES / APP LOGS"
+            echo "==========================================="
+            grep -E "(ReactNativeJS|ReactNative|com\.trainsmashai|Hermes|JSCEX)" \
+              /tmp/launch.log | tail -300 || echo "(none)"
+
+            echo ""
+            echo "==========================================="
+            echo "  FATAL ERRORS AND CRASHES"
+            echo "==========================================="
+            grep -E "(FATAL EXCEPTION|AndroidRuntime|Process.*died|E/React|E/Hermes|UnsatisfiedLink)" \
+              /tmp/launch.log | tail -150 || echo "(none)"
+
+            echo ""
+            echo "==========================================="
+            echo "  LAST 80 LINES (full logcat context)"
+            echo "==========================================="
+            tail -80 /tmp/launch.log
